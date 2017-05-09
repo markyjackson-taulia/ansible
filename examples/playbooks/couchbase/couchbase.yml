@@ -1,0 +1,31 @@
+- name: Couchbase Installation
+  hosts: all
+  sudo: yes
+  tasks:
+  - name: download Couchbase package
+    get_url: url=http://packages.couchbase.com/releases/2.5.1/couchbase-server-enterprise_2.5.1_x86_64.rpm dest=~/.
+  - name: Install dependencies
+    yum: pkg=openssl098e state=present
+  - name: Install Couchbase package on all machines
+    shell: rpm -i --replacepkgs ~/couchbase-server-enterprise_2.5.1_x86_64.rpm
+  - name: Set couchbase to be the owner of the data dir
+    file: path=/mnt/couchbasedata owner=couchbase
+
+- name: Initialize the cluster and add the nodes to the cluster
+  hosts: couchbase-main
+  sudo: yes
+  tasks:
+  - name: wait for Couchbase Server to be alive
+    wait_for: port=8091 delay=5
+  - name: set data location to the SSD
+    shell: /opt/couchbase/bin/couchbase-cli node-init -c 127.0.0.1:8091 -c localhost --node-init-data-path=/mnt/couchbasedata
+  - name: Configure main node
+    shell: /opt/couchbase/bin/couchbase-cli cluster-init -c 127.0.0.1:8091 --cluster-init-username={{admin_user}} --cluster-init-password={{admin_password}} --cluster-init-port=8091 --cluster-init-ramsize={{cluster_ram_quota}} -u {{admin_user}} -p {{admin_password}}
+  - name: Create shell script for configuring main node
+    action: template src=couchbase-add-node.j2 dest=/tmp/addnodes.sh mode=750
+  - name: Launch config script
+    action: shell /tmp/addnodes.sh
+  - name: Rebalance the cluster
+    shell: /opt/couchbase/bin/couchbase-cli rebalance -c 127.0.0.1:8091 -u {{admin_user}} -p {{admin_password}}
+  - name: create bucket {{bucket_name}} with {{num_replicas}} replicas
+    shell: /opt/couchbase/bin/couchbase-cli bucket-create -c 127.0.0.1:8091 --bucket={{bucket_name}} --bucket-type=couchbase --bucket-port=11211 --bucket-ramsize={{bucket_ram_quota}} --bucket-replica={{num_replicas}} -u {{admin_user}} -p {{admin_password}}
